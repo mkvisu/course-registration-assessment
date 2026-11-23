@@ -1,0 +1,190 @@
+openapi: 3.0.3
+info:
+  title: Course Registration Assessment API
+  version: 1.0.0
+  description: |
+    REST API for one MTech Artificial Intelligence offering.
+    Maximum 60 enrolled learners and 10 FIFO waitlisted learners.
+    Eligible degrees are BE, BTech, MCA and MSc; minimum marks 60% and
+    experience 1 year. Email (normalized to lowercase and trimmed) uniquely
+    identifies an active learner. No authentication is implemented.
+
+    On promotion, the earliest waitlisted learner is rechecked for eligibility.
+    Ineligible entries are removed and skipped. Mutations are serialized with
+    a pessimistic database lock on the offering row and committed transactionally.
+servers:
+  - url: http://localhost:8080
+    description: Local Spring Boot application
+tags:
+  - name: Enrollment
+  - name: Course
+paths:
+  /api/v1/enrollments:
+    post:
+      tags: [Enrollment]
+      operationId: enrollLearner
+      summary: Enroll or waitlist a learner
+      description: |
+        Returns existing active status for duplicate email requests before
+        evaluating eligibility. If a seat is available, creates an enrollment;
+        otherwise queues the learner if the waitlist has fewer than 10 entries.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnrollmentRequest'
+            example:
+              name: Ravi Kumar
+              email: ravi.kumar@example.com
+              degree: BTech
+              aggregateMarks: 75.5
+              experienceYears: 2
+      responses:
+        '201':
+          description: Learner enrolled
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentResult'}
+              example: {status: ENROLLED, message: Enrollment successful, email: ravi.kumar@example.com}
+        '202':
+          description: Eligible learner added to waitlist
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentResult'}
+              example: {status: WAITLISTED, message: Added to waitlist, email: ravi.kumar@example.com}
+        '200':
+          description: Duplicate request; no new record created
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentResult'}
+              examples:
+                enrolled:
+                  value: {status: ENROLLED, message: Already enrolled, email: ravi.kumar@example.com}
+                waitlisted:
+                  value: {status: WAITLISTED, message: Already in waitlist, email: ravi.kumar@example.com}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409':
+          description: Waitlist is full
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+              example: {error: Waitlist is full}
+        '422':
+          description: Learner fails eligibility criteria
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+              example: {error: Learner is not eligible as per eligibility criteria}
+  /api/v1/enrollments/{email}:
+    delete:
+      tags: [Enrollment]
+      operationId: dropLearner
+      summary: Drop enrollment or withdraw from waitlist
+      description: |
+        If an enrolled learner drops, the earliest currently eligible waitlisted
+        learner is promoted within the same transaction. If a waitlisted learner
+        withdraws, their entry is removed without triggering promotion.
+      parameters:
+        - name: email
+          in: path
+          required: true
+          description: Email identifying the active learner. URL-encode when necessary.
+          schema: {type: string, format: email}
+          example: ravi.kumar@example.com
+      responses:
+        '200':
+          description: Enrollment dropped or waitlist entry removed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EnrollmentResult'}
+              examples:
+                dropped:
+                  value: {status: DROPPED, message: Enrollment dropped successfully, email: ravi.kumar@example.com}
+                withdrawn:
+                  value: {status: DROPPED, message: Removed from waitlist, email: ravi.kumar@example.com}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404':
+          description: Email has no active enrollment or waitlist entry (including repeated drop)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ApiError'}
+              example: {error: No active enrollment or waitlist entry found}
+  /api/v1/courses/mtech-ai:
+    get:
+      tags: [Course]
+      operationId: getCourseStatus
+      summary: Get offering capacity and waitlist totals
+      responses:
+        '200':
+          description: Current course totals
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CourseStatus'}
+              example: {course: MTech Artificial Intelligence, capacity: 60, enrolled: 59, available: 1, waitlisted: 8, waitlistLimit: 10}
+components:
+  responses:
+    BadRequest:
+      description: Invalid request body, field validation, or invalid email path parameter
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/ApiError'}
+          example: {error: 'Invalid request: check required fields, email format and numeric values'}
+  schemas:
+    EnrollmentRequest:
+      type: object
+      additionalProperties: true
+      required: [name, email, degree, aggregateMarks, experienceYears]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          description: Nonblank learner name
+          example: Ravi Kumar
+        email:
+          type: string
+          format: email
+          minLength: 1
+          description: Case-insensitively normalized active learner identifier
+          example: ravi.kumar@example.com
+        degree:
+          type: string
+          description: Eligibility accepts BE, BTech, MCA, or MSc, case-insensitively
+          example: BTech
+        aggregateMarks:
+          type: number
+          format: double
+          minimum: 0
+          maximum: 100
+          description: Must be at least 60 to be eligible
+          example: 75.5
+        experienceYears:
+          type: number
+          format: double
+          minimum: 0
+          description: Must be at least 1 to be eligible
+          example: 2
+    EnrollmentResult:
+      type: object
+      required: [status, message, email]
+      properties:
+        status:
+          type: string
+          enum: [ENROLLED, WAITLISTED, DROPPED]
+        message: {type: string}
+        email: {type: string, format: email}
+    CourseStatus:
+      type: object
+      required: [course, capacity, enrolled, available, waitlisted, waitlistLimit]
+      properties:
+        course: {type: string, example: MTech Artificial Intelligence}
+        capacity: {type: integer, format: int32, example: 60}
+        enrolled: {type: integer, format: int64, minimum: 0}
+        available: {type: integer, format: int32, minimum: 0}
+        waitlisted: {type: integer, format: int64, minimum: 0}
+        waitlistLimit: {type: integer, format: int32, example: 10}
+    ApiError:
+      type: object
+      required: [error]
+      properties:
+        error: {type: string}
