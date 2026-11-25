@@ -256,3 +256,9 @@ Review the test classes `EnrollmentIntegrationTest.java` and `EmailApiTest.java`
 - Add standardized structured validation errors, observability and load tests for production readiness.
 - Keep `openapi.yaml` and controller DTOs synchronized; consider contract tests.
 
+
+## AI Assistance
+
+- [AI prompt and usage record](docs/ai/ai-usage-record.md)
+- [OpenAPI specification](openapi.yaml)
+
